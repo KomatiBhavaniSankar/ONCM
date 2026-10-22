@@ -1,0 +1,16 @@
+services:
+  oncm:
+    build: .
+    image: oncm-workbench:latest
+    container_name: oncm-workbench
+    env_file: .env            # all configuration lives in one file
+    ports:
+      - "8000:8000"
+    volumes:
+      - oncm_data:/srv/data           # SQLite file (only used when DATABASE_URL is sqlite)
+      - oncm_storage:/srv/storage     # uploaded files (only used when STORAGE_BACKEND=local)
+    restart: unless-stopped
+
+volumes:
+  oncm_data:
+  oncm_storage:

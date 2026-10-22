@@ -1,0 +1,171 @@
+"""Settings, database session, password/JWT helpers, auth dependencies."""
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import bcrypt
+import jwt
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    app_name: str = "ONCM Workbench"
+    app_base_url: str = "http://localhost:8000"
+    secret_key: str = "change-me"
+    two_person_rule: bool = True
+    reminder_days: str = "3,0"
+    access_token_minutes: int = 480
+
+    master_admin_email: str = "admin@example.org"
+    master_admin_password: str = "ChangeMe!12345"
+    master_admin_name: str = "ONCM Master Admin"
+
+    database_url: str = "sqlite:///./data/oncm.db"
+
+    storage_backend: str = "local"  # local | s3
+    local_storage_path: str = "./storage"
+    max_upload_mb: int = 25
+    allowed_extensions: str = "pdf,doc,docx,xls,xlsx,csv,png,jpg,jpeg,txt"
+    s3_bucket: str = ""
+    s3_region: str = "ap-south-1"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_endpoint_url: str = ""
+
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    mail_from: str = "workbench@example.org"
+    mail_reply_to: str = "oncm-support@example.org"
+    oncm_shared_mailbox: str = "oncm-support@example.org"
+
+    # optional: read access requests that arrive by email at the shared mailbox (any IMAP provider)
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_user: str = ""
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    review_reminder_days: int = 3   # remind reviewers when a document has been under review this long
+
+    # ---- Admin alerts: a SEPARATE sender account (e.g. a Gmail) that tells admins what is happening ----
+    # Gmail: smtp.gmail.com : 587 (STARTTLS) with an App Password (Google Account > Security > 2-Step Verification > App passwords).
+    alert_smtp_host: str = ""
+    alert_smtp_port: int = 587          # 587 = STARTTLS, 465 = implicit SSL
+    alert_smtp_user: str = ""           # the sender mailbox, e.g. komatibhavanishankar@gmail.com
+    alert_smtp_password: str = ""       # app password - NEVER commit this
+    alert_smtp_use_tls: bool = True
+    alert_mail_from: str = ""           # defaults to ALERT_SMTP_USER (Gmail always rewrites From to the signed-in account)
+    alert_from_name: str = "ONCM Workbench Alerts"
+    alert_recipients: str = ""          # comma-separated; seeded ONCE on first start, then managed in the UI
+
+
+settings = Settings()
+
+
+def _db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url
+
+
+_url = _db_url(settings.database_url)
+if _url.startswith("sqlite"):
+    Path("data").mkdir(exist_ok=True)
+    engine = create_engine(_url, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(_url, pool_pre_ping=True, pool_size=5, max_overflow=5)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# ---------- passwords & tokens ----------
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode()[:72], bcrypt.gensalt()).decode()
+
+
+def verify_password(pw: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(pw.encode()[:72], hashed.encode())
+    except ValueError:
+        return False
+
+
+def make_token(sub, typ: str = "access", minutes: int | None = None, **extra) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=minutes or settings.access_token_minutes)
+    return jwt.encode({"sub": str(sub), "typ": typ, "exp": exp, **extra}, settings.secret_key, algorithm="HS256")
+
+
+def decode_token(token: str, typ: str) -> dict:
+    try:
+        p = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(401, "Invalid or expired token")
+    if p.get("typ") != typ:
+        raise HTTPException(401, "Invalid token type")
+    return p
+
+
+# ---------- tiny in-memory rate limiter (use a gateway/Redis if you run many instances) ----------
+_hits: dict[str, list[float]] = {}
+
+
+def rate_limit(key: str, limit: int, window: int):
+    now = time.time()
+    q = [t for t in _hits.get(key, []) if now - t < window]
+    if len(q) >= limit:
+        raise HTTPException(429, "Too many attempts. Please wait and try again.")
+    q.append(now)
+    _hits[key] = q
+
+
+# ---------- auth dependencies ----------
+from app.models import User  # noqa: E402
+
+bearer = HTTPBearer(auto_error=False)
+
+
+def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer), db: Session = Depends(get_db)) -> User:
+    if not cred:
+        raise HTTPException(401, "Not authenticated")
+    p = decode_token(cred.credentials, "access")
+    u = db.get(User, int(p["sub"]))
+    if not u or not u.is_active:
+        raise HTTPException(401, "Account inactive")
+    return u
+
+
+def admin_user(u: User = Depends(current_user)) -> User:
+    if u.role not in ("master_admin", "secondary_admin"):
+        raise HTTPException(403, "Admin access required")
+    return u
+
+
+def master_user(u: User = Depends(current_user)) -> User:
+    if u.role != "master_admin":
+        raise HTTPException(403, "Master Admin access required")
+    return u
+
+
+def participant_user(u: User = Depends(current_user)) -> User:
+    if u.role != "participant" or not u.organization_id:
+        raise HTTPException(403, "Participant access required")
+    return u

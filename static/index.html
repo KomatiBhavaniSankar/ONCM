@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ONCM Workbench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  colors: { pine: { 950:'#0c211d', 900:'#12302b', 800:'#1b4540', 700:'#25605a', 100:'#dcebe8' },
+            mist:'#edf0ee', saffron:{ 500:'#e0a21b', 100:'#fbf0d0' } },
+  fontFamily: { display:['"Bricolage Grotesque"','sans-serif'], sans:['"Instrument Sans"','system-ui','sans-serif'] } } } }
+</script>
+<style>
+  body{background:#edf0ee;color:#12302b}
+  :focus-visible{outline:2px solid #e0a21b;outline-offset:2px}
+  .btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem .9rem;border-radius:.5rem;font-weight:600;font-size:.875rem;transition:background .15s}
+  .btn-primary{background:#12302b;color:#fff}.btn-primary:hover{background:#25605a}
+  .btn-ghost{border:1px solid #c5d2ce;background:#fff}.btn-ghost:hover{background:#dcebe8}
+  .btn-danger{background:#fff;border:1px solid #e2b4b4;color:#9b2c2c}.btn-danger:hover{background:#fbeaea}
+  .field{width:100%;border:1px solid #c5d2ce;border-radius:.5rem;padding:.5rem .7rem;background:#fff;font-size:.9rem}
+  label.l{display:block;font-size:.8rem;font-weight:600;margin:.7rem 0 .25rem;color:#25605a}
+  table.t{width:100%;font-size:.875rem;border-collapse:collapse}
+  table.t th{text-align:left;font-weight:600;color:#25605a;padding:.55rem .75rem;border-bottom:2px solid #dcebe8;white-space:nowrap}
+  table.t td{padding:.6rem .75rem;border-bottom:1px solid #e6ece9;vertical-align:top}
+  .badge{display:inline-block;padding:.1rem .55rem;border-radius:999px;font-size:.75rem;font-weight:600;white-space:nowrap}
+  /* the one memorable element: the onboarding rail */
+  .rail{display:flex;align-items:flex-start;gap:0}
+  .rail .node{flex:1;position:relative;text-align:center;font-size:.8rem;font-weight:600;padding-top:2.1rem;color:#6b8580}
+  .rail .node::before{content:"";position:absolute;top:.55rem;left:0;right:0;height:4px;background:#c5d2ce}
+  .rail .node::after{content:"";position:absolute;top:0;left:calc(50% - .8rem);width:1.6rem;height:1.6rem;border-radius:50%;background:#fff;border:4px solid #c5d2ce}
+  .rail .node.done{color:#12302b}.rail .node.done::before{background:#25605a}.rail .node.done::after{background:#25605a;border-color:#25605a}
+  .rail .node.now{color:#12302b}.rail .node.now::after{background:#e0a21b;border-color:#12302b}
+  .rail .node:first-child::before{left:50%}.rail .node:last-child::before{right:50%}
+  dialog{border:0;border-radius:.9rem;padding:0;max-width:44rem;width:94vw;box-shadow:0 20px 60px rgba(12,33,29,.35)}
+  dialog::backdrop{background:rgba(12,33,29,.55)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body class="font-sans min-h-screen">
+<div id="app"></div>
+<dialog id="dlg"><div id="dlg-body"></div></dialog>
+<div id="toast" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+<script src="/app.js"></script>
+</body>
+</html>
