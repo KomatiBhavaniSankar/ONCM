@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from sqlalchemy import inspect, text
 from fastapi.staticfiles import StaticFiles
 
 from app.core import SessionLocal, engine, hash_password, settings
@@ -16,6 +17,23 @@ from app.routers import alerts as alerts_router
 from app.services import _pool, deliver, notify, shared_mailbox, storage
 
 log = logging.getLogger("oncm")
+
+
+def add_missing_columns():
+    """Tiny forward-only migration: adds any new model column that an existing database table does not have yet
+    (so upgrading the app never needs a manual ALTER TABLE). Safe to run on every start."""
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl_type = col.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl_type}'))
+                log.warning("Added column %s.%s", table.name, col.name)
 
 
 def seed_master():
@@ -133,6 +151,7 @@ def loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    add_missing_columns()
     storage()  # fail fast on bad storage config
     seed_master()
     alerts.seed_recipients()

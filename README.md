@@ -14,6 +14,10 @@ docker compose up -d --build   # 2. build and start
 Without Docker: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && uvicorn app.main:app --reload`
 API docs (Swagger): http://localhost:8000/docs
 
+## Request to join form (Organizational Profile and Scale)
+
+Public page `#/join` (17 questions + contact and ONCM role). Mobile-first, sticky scroll-progress bar with section tabs, answers auto-saved on the device until submitted. Server-side validation lives in `JoinIn` in `app/routers/public.py`; option lists are served from `GET /api/meta`. The Master Admin sees every answer under **Onboarding Requests > View**. Full Supabase schema: `supabase/schema.sql` (new project) or `supabase/migrations/002_join_request_profile.sql` (existing database; the app also adds the new columns itself on start).
+
 ## Everything is configured in `.env`
 
 | Want to… | Set |

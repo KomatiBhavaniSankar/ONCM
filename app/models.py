@@ -1,7 +1,8 @@
 """Database tables (work on SQLite locally and on Supabase PostgreSQL)."""
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -9,6 +10,10 @@ Base = declarative_base()
 
 def now():
     return datetime.now(timezone.utc)
+
+
+# JSON on SQLite, JSONB on Supabase/PostgreSQL
+JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _ts():
@@ -62,6 +67,25 @@ class JoinRequest(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     created_at = _ts()
     decided_at = Column(DateTime(timezone=True))
+    # ---- Organizational Profile and Scale (questions 2-17 of the request-to-join form; Q1 is org_name) ----
+    org_type = Column(String(40))                  # Q2
+    registration_number = Column(String(100))      # Q3 CIN / LLPIN / equivalent
+    date_of_incorporation = Column(Date)           # Q4
+    country = Column(String(100))                  # Q5
+    state_ut = Column(String(100))                 # Q6
+    city = Column(String(100))                     # Q7
+    year_established = Column(Integer)             # Q8
+    registered_address = Column(Text)              # Q9
+    employee_range = Column(String(20))            # Q10
+    geographic_presence = Column(JSONType)         # Q11 list[str]
+    beneficiary_segments = Column(JSONType)        # Q12 list[str]
+    standards_worked_with = Column(JSONType)       # Q13 list[str]
+    certifications = Column(Text)                  # Q14
+    carbon_services = Column(JSONType)             # Q15 list[str]
+    org_profile = Column(Text)                     # Q16 (max 150 words)
+    website = Column(String(300))                  # Q17
+    contact_phone = Column(String(40))
+    contact_designation = Column(String(120))
 
 
 class ChecklistItem(Base):
