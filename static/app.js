@@ -253,7 +253,7 @@ function inviteView(token) {
 async function publicView() {
   const r = await api('/public/resources'); S.cache.pubreq = r.request_only;
   $('#app').innerHTML = authShell(card(`<h2 class="font-display text-2xl font-bold mb-3">Public resources</h2>
-  ${r.public.length ? r.public.map(x => `<div class="flex justify-between items-center py-2 border-b border-neutral-200"><span>${esc(x.title)}<span class="block text-xs font-mono">${esc(x.code)}</span></span>
+  ${r.public.length ? r.public.map(x => `<div class="flex justify-between items-center py-2 border-b border-neutral-200"><span>${esc(x.title)}<span class="block text-xs font-mono">${esc(x.code)}</span>${(x.attachments || []).map(a => `<span class="block text-xs mt-1">+ ${esc(a.filename)} <button class="btn btn-ghost" data-act="pa-dl" data-doc="${x.id}" data-id="${a.id}">Download</button></span>`).join('')}</span>
   <button class="btn btn-ghost" data-act="pubdl" data-id="${x.id}">Download</button></div>`).join('') : empty('No public documents yet.')}
   <h2 class="font-display text-xl font-bold mt-6 mb-2">Available on request</h2>
   ${r.request_only.length ? r.request_only.map(x => `<div class="flex justify-between items-center py-2 border-b border-neutral-200"><span>${esc(x.title)}<span class="block text-xs font-mono">${esc(x.code)}</span></span>
@@ -332,7 +332,7 @@ VIEWS.mydocs = async () => {
 VIEWS.resources = async () => {
   const [rs, cat] = await Promise.all([api('/me/resources'), api('/me/catalogue')]);
   shell('resources', `${head('Resources', 'Approved material shared with you by ONCM.')}
-  ${card(rs.length ? `<table class="t"><tbody>${rs.map(r => `<tr><td><b>${esc(r.title)}</b><div class="text-xs font-mono">${esc(r.code)}</div><div class="text-xs">${esc(r.repo_category_name || '')}</div></td>
+  ${card(rs.length ? `<table class="t"><tbody>${rs.map(r => `<tr><td><b>${esc(r.title)}</b><div class="text-xs font-mono">${esc(r.code)}</div><div class="text-xs">${esc(r.repo_category_name || '')}</div>${(r.attachments || []).map(a => `<div class="text-xs mt-1">+ ${esc(a.filename)} <button class="btn btn-ghost" data-act="ra-dl" data-doc="${r.id}" data-id="${a.id}">Download</button></div>`).join('')}</td>
   <td>${esc(r.audience_label)}</td><td class="text-right"><button class="btn btn-ghost" data-act="r-dl" data-id="${r.id}">Download</button></td></tr>`).join('')}</tbody></table>` : empty('Nothing has been shared with you yet.'))}
   <h2 class="font-display text-xl font-bold mt-6 mb-2">Available on request</h2>
   ${card(cat.filter(c => c.request_status !== 'approved').length ? `<table class="t"><tbody>${cat.filter(c => c.request_status !== 'approved').map(c => `<tr><td><b>${esc(c.title)}</b><div class="text-xs font-mono">${esc(c.code)}</div></td><td>${esc(c.repo_category_name || '')}</td>
@@ -587,12 +587,18 @@ const A = {
     <button type="button" class="btn btn-ghost" data-act="cl-new" data-doc="${x.id}">Record decision / supersede</button></div></form>
     ${['internally_approved', 'shared_externally'].includes(x.status) && canShare && x.access_level !== 'internal' ? `<h3 class="font-semibold mt-5">Repository configuration and publication</h3>
       <p class="text-sm">Publishes the approved classification: <b>${esc(S.meta.access_levels[x.access_level])}</b>. It cannot be broader than what was approved.</p>
+      <h4 class="font-semibold mt-3 text-sm">Supporting files to send with this publication</h4>
+      <p class="text-xs text-neutral-600">Optional. Uploaded files are stored securely and delivered to the same audience when you press ${live ? 'Republish' : 'Publish'}.</p>
+      ${x.attachments.length ? x.attachments.map(a => `<div class="text-sm flex justify-between items-center py-1 border-t border-neutral-200"><span>${esc(a.filename)} · ${Math.max(1, Math.round((a.size || 0) / 1024))} KB · ${a.published ? badge('shared') : '<span class="badge bg-amber-100 text-amber-800">Waiting for Publish</span>'}</span>
+        <span class="whitespace-nowrap"><button type="button" class="btn btn-ghost" data-act="a-dl" data-id="${a.id}">Download</button><button type="button" class="btn btn-danger" data-act="a-remove" data-id="${a.id}" data-doc="${x.id}">Remove</button></span></div>`).join('') : ''}
+      <form id="f-att" data-id="${x.id}" class="mt-2 flex gap-2 items-center flex-wrap"><input class="field max-w-sm" type="file" name="file" required><button class="btn btn-ghost">Upload</button></form>
       <form id="f-pub" data-id="${x.id}" data-level="${x.access_level}">
       ${x.access_level === 'role_specific' ? `<label class="l">Audience</label><div class="grid grid-cols-3">${actorChecks('actor', x.target_actor_types).replace(/name="actor"/g, 'name="actor"')}</div>` : ''}
       ${x.access_level === 'restricted' ? `<label class="l">Authorised ONCM Consortium Partner Firms</label><div class="max-h-32 overflow-auto border border-neutral-300 rounded p-2">${checks('org', orgs.map(o => [o.id, o.name]), x.organization_id ? [String(x.organization_id)] : [])}</div>
         <label class="l">Authorised individuals</label><div class="max-h-32 overflow-auto border border-neutral-300 rounded p-2">${checks('usr', parts.map(p => [p.id, `${p.name} (${p.organization})`]))}</div>` : ''}
       <label class="l">Access expires (optional)</label><input class="field max-w-xs" type="date" name="expires_at"><button class="btn btn-primary mt-3">${live ? 'Republish current version' : 'Publish version v' + x.current_version}</button></form>` : ''}
     ${x.shares.length ? `<h3 class="font-semibold mt-5">Publication</h3>${x.shares.map(s => `<div class="text-sm py-1 border-t border-neutral-200"><div class="flex justify-between"><span>${esc(lvlShort(s.audience))} · v${s.version} · ${esc(label(s.status))}${s.actor_types ? ' · ' + esc(s.actor_types.join(', ')) : ''}</span>${s.status === 'active' && canShare ? `<button class="btn btn-danger" data-act="s-revoke" data-id="${s.id}">Unpublish</button>` : ''}</div>
+      ${x.attachments.filter(a => a.share_id === s.id).length ? `<div class="text-xs ml-3 text-neutral-600">Supporting files: ${x.attachments.filter(a => a.share_id === s.id).map(a => esc(a.filename)).join(', ')}</div>` : ''}
       ${s.grants.map(g => `<div class="text-xs ml-3 flex justify-between"><span>${esc(g.organization || g.user)}</span>${s.status === 'active' && canShare ? `<button class="btn btn-ghost" data-act="g-remove" data-id="${g.id}">Remove</button>` : ''}</div>`).join('')}</div>`).join('')}` : ''}
     ${x.change_log.length ? `<h3 class="font-semibold mt-5">Documentation Decision Status Log</h3>${x.change_log.map(c => `<div class="text-sm border-t border-neutral-200 py-1"><b>${esc(c.title)}</b> · ${fmt(c.created_at)}${c.decision ? `<div>${esc(c.decision)}</div>` : ''}</div>`).join('')}` : ''}
     <h3 class="font-semibold mt-5">Review history</h3>${x.reviews.length ? x.reviews.map(r => `<div class="text-sm border-t border-neutral-200 py-2"><b>${label(r.decision)}</b> by ${esc(r.reviewer_name)} · v${r.version} · ${fmt(r.created_at)}${r.internal_comment ? `<div>Internal: ${esc(r.internal_comment)}</div>` : ''}${r.feedback ? `<div>To participant: ${esc(r.feedback)}</div>` : ''}</div>`).join('') : empty('No reviews yet.')}`);
@@ -601,6 +607,10 @@ const A = {
   'd-restore': run(async (d) => { const reason = prompt('Reason for restoring (required):'); if (!reason) return; await api(`/admin/documents/${d.id}/restore`, { method: 'POST', body: { reason } }); toast('Restored to draft'); closeModal(); go(); }),
   'g-remove': run(async (d) => { await api('/admin/grants/' + d.id, { method: 'DELETE' }); toast('Access removed'); closeModal(); go(); }),
   'd-dl': run(async (d) => download(`/admin/documents/${d.id}/download?version=${d.v}`)),
+  'a-dl': run(async (d) => download('/admin/attachments/' + d.id + '/download')),
+  'a-remove': run(async (d) => { if (!confirm('Remove this file? If it was already published, recipients lose access to it.')) return; await api('/admin/attachments/' + d.id, { method: 'DELETE' }); toast('File removed'); A['d-open']({ id: d.doc }); }),
+  'ra-dl': run(async (d) => download(`/me/resources/${d.doc}/attachments/${d.id}/download`)),
+  'pa-dl': run(async (d) => download(`/public/resources/${d.doc}/attachments/${d.id}/download`)),
   'd-override': run(async (d) => { const status = prompt('Force status to (e.g. internally_approved):'); if (!status) return; const reason = prompt('Reason (required, audited):'); if (!reason) return;
     await api(`/master/documents/${d.id}/override`, { method: 'POST', body: { status, reason } }); toast('Status overridden'); closeModal(); go(); }),
   's-revoke': run(async (d) => { await api('/admin/shares/' + d.id, { method: 'DELETE' }); toast('Share revoked'); closeModal(); go(); }),
@@ -681,9 +691,10 @@ const FORMS = {
     await api(`/admin/documents/${f.dataset.id}/assign`, { method: 'POST', body }); toast('Saved'); closeModal(); go(); },
   'f-dp': async (f) => { const b = fd(f); await api('/admin/documents/' + f.dataset.id, { method: 'PATCH', body: { access_level: b.access_level, target_actor_types: getAll(f, 'actor'), workstream_id: b.workstream_id ? +b.workstream_id : 0 } }); toast('Classification saved (needs confirmation at approval)'); closeModal(); go(); },
   'f-rv': async (f) => { const b = fd(f); await api(`/admin/documents/${f.dataset.id}/review`, { method: 'POST', body: { decision: b.decision, comment: b.comment || '', feedback: b.feedback || '', confirm_classification: !!b.confirm } }); toast('Decision recorded'); closeModal(); go(); },
+  'f-att': async (f) => { await api(`/admin/documents/${f.dataset.id}/attachments`, { method: 'POST', form: new FormData(f) }); toast('File uploaded. Press Publish to send it.'); A['d-open']({ id: f.dataset.id }); },
   'f-pub': async (f) => { const b = fd(f); const body = { expires_at: b.expires_at ? b.expires_at + 'T23:59:59Z' : null, organization_ids: getAll(f, 'org').map(Number), user_ids: getAll(f, 'usr').map(Number) };
     if (f.dataset.level === 'role_specific') body.actor_types = getAll(f, 'actor');
-    await api(`/admin/documents/${f.dataset.id}/publish`, { method: 'POST', body }); toast('Published. Recipients were emailed a link to log in.'); closeModal(); go(); },
+    await api(`/admin/documents/${f.dataset.id}/publish`, { method: 'POST', body }); toast('Published. Recipients were emailed a link to log in; supporting files are included.'); closeModal(); go(); },
   'f-tn': async (f) => { const b = fd(f); ['organization_id', 'owner_id', 'workstream_id'].forEach(k => b[k] = b[k] ? +b[k] : null); b.due_date = b.due_date ? b.due_date + 'T09:00:00Z' : null; await api('/admin/tasks', { method: 'POST', body: b }); toast('Task created'); closeModal(); go(); },
   'f-an': async (f) => { const b = fd(f); b.can_share = !!b.can_share; b.can_export = !!b.can_export; b.reason = b.reason || ''; b.repo_access = getAll(f, 'repo'); delete b.repo; await api('/master/admins', { method: 'POST', body: b }); toast('Admin created'); closeModal(); go(); },
   'f-ae': async (f) => { const b = fd(f); await api('/master/admins/' + f.dataset.id, { method: 'PATCH', body: { is_active: !!b.is_active, can_share: !!b.can_share, can_export: !!b.can_export, repo_access: getAll(f, 'repo'), reason: b.reason } }); toast('Admin updated'); closeModal(); go(); },

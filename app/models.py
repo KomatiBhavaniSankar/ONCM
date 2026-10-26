@@ -164,6 +164,21 @@ class DocumentShare(Base):
     created_at = _ts()
 
 
+class ShareAttachment(Base):
+    """Supporting file an admin uploads after approval and sends with a publication (stored via local disk or S3).
+    share_id NULL = staged (uploaded but not yet published); set = delivered with that publication."""
+    __tablename__ = "share_attachments"
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), index=True)
+    share_id = Column(Integer, ForeignKey("document_shares.id"), nullable=True, index=True)
+    filename = Column(String(255))
+    storage_key = Column(String(500), nullable=False)
+    checksum = Column(String(64))
+    size = Column(Integer)
+    uploaded_by = Column(Integer, ForeignKey("profiles.id"))
+    created_at = _ts()
+
+
 class Task(Base):
     __tablename__ = "onboarding_tasks"
     id = Column(Integer, primary_key=True)

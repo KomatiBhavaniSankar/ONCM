@@ -17,7 +17,7 @@ from app import alerts
 from app.core import SessionLocal, make_token, settings
 from datetime import timedelta
 from app.models import (AccessRequest, AuditLog, ChangeLog, ChecklistItem, Document, DocumentGrant, DocumentReview,
-                        DocumentShare, DocumentVersion, Notification, Organization, Task, User, Workstream)
+                        DocumentShare, DocumentVersion, Notification, Organization, ShareAttachment, Task, User, Workstream)
 
 # =============================================================== constants
 CATEGORIES = ["01 Onboarding documents", "02 Agreements", "03 Implementation", "04 Meetings and decisions"]
@@ -121,6 +121,11 @@ class LocalStorage:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
 
+    def delete(self, key: str):
+        p = self.path(key)
+        if p.exists():
+            p.unlink()
+
     def download_url(self, key: str, filename: str) -> str:
         token = make_token("file", typ="file", minutes=5, key=key, name=filename)
         return f"/api/files/local?token={token}"
@@ -140,6 +145,9 @@ class S3Storage:
 
     def save(self, key: str, data: bytes):
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ServerSideEncryption="AES256")
+
+    def delete(self, key: str):
+        self.client.delete_object(Bucket=self.bucket, Key=key)
 
     def download_url(self, key: str, filename: str) -> str:
         safe = filename.replace('"', "")
@@ -373,6 +381,22 @@ def catalogue_docs(db: Session, level: str):
         if d and d.status == "shared_externally" and sh.audience == level:
             out.append((d, sh))
     return out
+
+
+def attachment_key(doc: Document, filename: str) -> str:
+    base = f"organizations/{doc.organization_id}" if doc.organization_id else f"repository/{(doc.repo_category or 'misc').lower()}"
+    return f"{base}/{doc.id}/attachments/{uuid.uuid4().hex[:10]}_{filename}"
+
+
+def attachment_row(a, with_share=False):
+    out = {"id": a.id, "filename": a.filename, "size": a.size, "created_at": iso(a.created_at)}
+    if with_share:
+        out.update(share_id=a.share_id, published=a.share_id is not None)
+    return out
+
+
+def share_attachments(db: Session, share: DocumentShare):
+    return [attachment_row(a) for a in db.query(ShareAttachment).filter_by(share_id=share.id).order_by(ShareAttachment.id)]
 
 
 def version_row(v: DocumentVersion):

@@ -16,8 +16,8 @@ from app.core import (current_user, decode_token, get_db, hash_password, make_to
 from app import alerts
 from app.models import AccessRequest, Document, DocumentShare, JoinRequest, Organization, User
 from app.services import (ACTOR_TYPES, REPO_CATEGORIES, active_shares, audit, catalogue_docs, doc_code, doc_out, notify,
-                          shared_mailbox, storage, user_out)
-from app.models import DocumentVersion
+                          shared_mailbox, share_attachments, storage, user_out)
+from app.models import DocumentVersion, ShareAttachment
 
 router = APIRouter(prefix="/api")
 
@@ -284,7 +284,7 @@ def join(body: JoinIn, request: Request, db: Session = Depends(get_db)):
 @router.get("/public/resources")
 def public_resources(db: Session = Depends(get_db)):
     """Level 5 (Public) documents, plus a metadata-only list of Level 6 (Request-only) documents."""
-    pub = [dict(doc_out(db, d, True), access="public") for d, _ in catalogue_docs(db, "public")]
+    pub = [dict(doc_out(db, d, True), access="public", attachments=share_attachments(db, s)) for d, s in catalogue_docs(db, "public")]
     req = [{"id": d.id, "code": doc_code(d), "title": d.title, "repo_category_name": REPO_CATEGORIES.get(d.repo_category), "access": "request_only"}
            for d, _ in catalogue_docs(db, "request_only")]
     return {"public": pub, "request_only": req}
@@ -298,6 +298,15 @@ def public_download(doc_id: int, db: Session = Depends(get_db)):
     d, s = pair
     v = db.query(DocumentVersion).filter_by(document_id=d.id, version=s.version).first()
     return {"url": storage().download_url(v.storage_key, v.filename), "filename": v.filename}
+
+
+@router.get("/public/resources/{doc_id}/attachments/{att_id}/download")
+def public_attachment_download(doc_id: int, att_id: int, db: Session = Depends(get_db)):
+    pair = next(((d, s) for d, s in catalogue_docs(db, "public") if d.id == doc_id), None)
+    a = db.get(ShareAttachment, att_id) if pair else None
+    if not pair or not a or a.share_id != pair[1].id:
+        raise HTTPException(404, "Not found")
+    return {"url": storage().download_url(a.storage_key, a.filename), "filename": a.filename}
 
 
 class PublicRequestIn(BaseModel):

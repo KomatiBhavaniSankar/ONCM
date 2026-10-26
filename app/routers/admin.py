@@ -11,8 +11,8 @@ from app import alerts
 from app.core import admin_user, get_db, make_token, settings
 from app.excel import build_workbook
 from app.models import (AccessRequest, ChangeLog, ChecklistItem, Document, DocumentGrant, DocumentReview,
-                        DocumentShare, DocumentVersion, Notification, Organization, Task, User, Workstream)
-from app.services import (ACCESS_LEVELS, ACTOR_TYPES, ALLOWED_LEVELS, CATEGORIES, DEFAULT_LEVEL, REPO_CATEGORIES,
+                        DocumentShare, DocumentVersion, Notification, Organization, ShareAttachment, Task, User, Workstream)
+from app.services import (attachment_key, attachment_row, read_validated, ACCESS_LEVELS, ACTOR_TYPES, ALLOWED_LEVELS, CATEGORIES, DEFAULT_LEVEL, REPO_CATEGORIES,
                           STAGES, STAGE_GROUP, active_shares, add_version, admin_repo_codes, audit, can_see_doc,
                           catalogue_docs, check_transition, close_review_tasks, doc_code, doc_out, ensure_review_task,
                           invite_link, latest_maker_id, log_change, new_document, notify, notify_doc_owners, row,
@@ -342,6 +342,7 @@ def document_detail(doc_id: int, u: User = Depends(admin_user), db: Session = De
             "versions": [version_row(v) for v in db.query(DocumentVersion).filter_by(document_id=d.id).order_by(DocumentVersion.version)],
             "reviews": [{**row(r), "reviewer_name": names.get(r.reviewer_id)} for r in revs],
             "shares": shares,
+            "attachments": [attachment_row(a, True) for a in db.query(ShareAttachment).filter_by(document_id=d.id).order_by(ShareAttachment.id)],
             "change_log": [row(c) for c in db.query(ChangeLog).filter((ChangeLog.document_id == d.id) | (ChangeLog.supersedes_document_id == d.id)).order_by(ChangeLog.id.desc())],
             "maker_id": latest_maker_id(db, d)}
 
@@ -589,6 +590,10 @@ def publish(doc_id: int, body: PublishIn, u: User = Depends(admin_user), db: Ses
                        actor_types=types if level == "role_specific" else None, granted_by=u.id, expires_at=body.expires_at)
     db.add(sh)
     db.flush()
+    # supporting files: staged uploads and files from earlier publications travel with this publication
+    atts = db.query(ShareAttachment).filter_by(document_id=d.id).all()
+    for a in atts:
+        a.share_id = sh.id
     recipients = set()
     for o in orgs:
         db.add(DocumentGrant(share_id=sh.id, document_id=d.id, organization_id=o.id, source="restricted", expires_at=body.expires_at))
@@ -602,17 +607,73 @@ def publish(doc_id: int, body: PublishIn, u: User = Depends(admin_user), db: Ses
         recipients |= {o.contact_email for o in db.query(Organization).filter(Organization.status == "active", Organization.actor_type.in_(types))}
     for em in filter(None, recipients):
         notify(db, "document_shared", em, "A new document is available",
-               f"“{d.title}” ({doc_code(d)}) has been shared with you. Log in to the Workbench to download it securely.",
+               f"“{d.title}” ({doc_code(d)}) has been shared with you"
+               + (f", together with {len(atts)} supporting file(s)" if atts else "") + ". Log in to the Workbench to download it securely.",
                f"share:{sh.id}:{em}")
     alerts.queue_alert(db, "documents", "document_published", f"Published: {d.title}",
                        alerts.render(f"{u.name} published a document.",
                                      [("Document", f"{doc_code(d)}  {d.title}"), ("Access level", ACCESS_LEVELS[level]),
-                                      ("Emails sent to", f"{len([r for r in recipients if r])} recipient(s)")]),
+                                      ("Supporting files", str(len(atts))), ("Emails sent to", f"{len([r for r in recipients if r])} recipient(s)")]),
                        f"published:{sh.id}")
     log_change(db, u, f"Published {doc_code(d)}", f"Access level: {ACCESS_LEVELS[level]}", d)
-    audit(db, u, "document.published", "document", d.id, {"level": level, "version": sh.version, "orgs": [o.id for o in orgs], "users": [x.id for x in users]})
+    audit(db, u, "document.published", "document", d.id, {"level": level, "version": sh.version, "attachments": len(atts), "orgs": [o.id for o in orgs], "users": [x.id for x in users]})
     db.commit()
     return row(sh)
+
+
+def _att_guard(u: User):
+    if u.role != MASTER and not u.can_share:
+        raise HTTPException(403, "You are not authorised to upload files for publication")
+
+
+@router.post("/documents/{doc_id}/attachments", status_code=201)
+async def upload_attachment(doc_id: int, file: UploadFile = File(...), u: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Upload a supporting file once the document is approved. It is sent to the audience when you press Publish / Republish."""
+    _att_guard(u)
+    d = get_doc(db, u, doc_id)
+    if d.status not in ("internally_approved", "shared_externally") or not d.classification_confirmed_at:
+        raise HTTPException(409, "Files can be uploaded for sharing only after the document is approved")
+    if d.access_level == "internal":
+        raise HTTPException(409, "This document is classified Internal and cannot be shared externally")
+    data, name, checksum = await read_validated(file)
+    if db.query(ShareAttachment).filter_by(document_id=d.id, checksum=checksum).first():
+        raise HTTPException(409, "This file has already been uploaded for this document")
+    key = attachment_key(d, name)
+    storage().save(key, data)  # local disk or S3, chosen by STORAGE_BACKEND
+    a = ShareAttachment(document_id=d.id, filename=name, storage_key=key, checksum=checksum, size=len(data), uploaded_by=u.id)
+    db.add(a)
+    audit(db, u, "document.attachment_uploaded", "document", d.id, {"filename": name, "size": len(data)})
+    db.commit()
+    return attachment_row(a, True)
+
+
+@router.get("/attachments/{att_id}/download")
+def attachment_download(att_id: int, u: User = Depends(admin_user), db: Session = Depends(get_db)):
+    a = db.get(ShareAttachment, att_id)
+    if not a:
+        raise HTTPException(404, "File not found")
+    get_doc(db, u, a.document_id)
+    audit(db, u, "document.attachment_download", "document", a.document_id, {"attachment": a.id})
+    db.commit()
+    return {"url": storage().download_url(a.storage_key, a.filename), "filename": a.filename}
+
+
+@router.delete("/attachments/{att_id}")
+def attachment_remove(att_id: int, u: User = Depends(admin_user), db: Session = Depends(get_db)):
+    _att_guard(u)
+    a = db.get(ShareAttachment, att_id)
+    if not a:
+        raise HTTPException(404, "File not found")
+    get_doc(db, u, a.document_id)
+    key, was_live = a.storage_key, a.share_id is not None
+    db.delete(a)
+    audit(db, u, "document.attachment_removed", "document", a.document_id, {"filename": a.filename, "was_published": was_live})
+    db.commit()
+    try:
+        storage().delete(key)
+    except Exception:  # file cleanup is best-effort; the database row is already gone
+        pass
+    return {"ok": True}
 
 
 @router.post("/documents/{doc_id}/grants", status_code=201)

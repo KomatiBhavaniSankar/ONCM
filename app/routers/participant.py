@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.core import get_db, participant_user
 from datetime import timedelta
-from app.models import (AccessRequest, ChecklistItem, Document, DocumentVersion, Notification, Organization, Task, User)
+from app.models import (AccessRequest, ChecklistItem, Document, DocumentVersion, Notification, Organization, ShareAttachment, Task, User)
 from app.services import (ACCESS_LEVELS, CATEGORIES, FOLDER_TO_CODE, STAGES, active_shares, add_version, audit,
                           catalogue_docs, check_transition, doc_code, doc_out, new_document, notify, participant_resources,
-                          shared_mailbox, storage, utcnow, version_row, row)
+                          shared_mailbox, share_attachments, storage, utcnow, version_row, row)
 
 router = APIRouter(prefix="/api/me")
 
@@ -124,7 +124,7 @@ def resources(u: User = Depends(participant_user), db: Session = Depends(get_db)
     out = []
     for d, s in participant_resources(db, u, o):
         x = doc_out(db, d, True)
-        x.update(audience=s.audience, audience_label=LEVEL_LABEL[s.audience], shared_version=s.version)
+        x.update(audience=s.audience, audience_label=LEVEL_LABEL[s.audience], shared_version=s.version, attachments=share_attachments(db, s))
         out.append(x)
     return out
 
@@ -140,6 +140,18 @@ def download_resource(doc_id: int, u: User = Depends(participant_user), db: Sess
     audit(db, u, "resource.download", "document", d.id, {"version": s.version})
     db.commit()
     return {"url": storage().download_url(v.storage_key, v.filename), "filename": v.filename}
+
+
+@router.get("/resources/{doc_id}/attachments/{att_id}/download")
+def download_resource_attachment(doc_id: int, att_id: int, u: User = Depends(participant_user), db: Session = Depends(get_db)):
+    o = _org(db, u)
+    pair = next(((d, s) for d, s in participant_resources(db, u, o) if d.id == doc_id), None)
+    a = db.get(ShareAttachment, att_id) if pair else None
+    if not pair or not a or a.share_id != pair[1].id:
+        raise HTTPException(404, "Resource not found")
+    audit(db, u, "resource.attachment_download", "document", doc_id, {"attachment": a.id})
+    db.commit()
+    return {"url": storage().download_url(a.storage_key, a.filename), "filename": a.filename}
 
 
 @router.get("/catalogue")
